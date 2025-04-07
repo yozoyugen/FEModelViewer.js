@@ -1,0 +1,727 @@
+<html>
+<meta charset="utf-8"/>
+<style> 
+    body {
+        margin: 0;
+        background-color: #fff;
+    }
+</style>
+<body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/9.5.0/math.min.js"></script>
+<script src="lib/three.min.js"></script>
+<script src="lib/TrackballControls.js"></script>
+<script src="lib/LineSegments2.js"></script>
+<script src="lib/Line2.js"></script>
+<script src="lib/LineMaterial.js"></script>
+<script src="lib/LineSegmentsGeometry.js"></script>
+<script src="lib/LineGeometry.js"></script>
+<script src="lib/GeometryUtils.js"></script>
+<script src="lib/stats.min.js"></script>
+
+<center>
+    <form name="myform" style="position:absolute; left: 10%;">
+        <input name="myfile" type="file"  />
+    </form>
+    <!--Home-->
+    <p style="position:absolute;left: 0%; bottom:0%">
+        <a href="https://caelab.work/" target="_blank">Home</a>
+    </p>
+</center>
+
+
+
+<script type="module">
+
+import { GUI } from '/lib/lil-gui.module.min.js';
+//import { GUI } from '/HAKAI-pre/lib/lil-gui.module.min.js';
+
+const stats = new Stats();
+
+let camera;
+let renderer;
+let scene;
+let mAxes;
+let resolution;
+let trackball;
+let PART = [];
+let INSTANCE = [];
+let MODEL = new Object();
+let ELEMENT_MESH = [];
+let WIRE_MESH = [];
+const gui = new GUI();
+let props = new Object();
+
+
+var form = document.forms.myform;
+form.myfile.addEventListener('change', function(e) {
+    
+    var result = e.target.files[0];
+    var reader = new FileReader();
+  
+    reader.readAsText( result );
+    reader.addEventListener( 'load', function() {
+    
+        //console.log(reader.result);    
+
+        let lines = reader.result.split('\n');
+        //console.log(lines);    
+
+        mParseModel(lines);
+        mAddModelToScene();
+    })
+
+});
+
+
+init();
+animate();
+window.addEventListener('resize', onResize);
+
+  
+function init() {
+
+    console.log(THREE.REVISION);
+
+    stats.showPanel(0);
+    document.body.appendChild(stats.dom);
+    stats.domElement.style.left = "50px"
+
+    let width = window.innerWidth; //960;
+    let height = window.innerHeight; //540;
+
+    scene = new THREE.Scene();
+  
+    camera = new THREE.PerspectiveCamera( 45, width/height, 0.1, 10000 ); //75
+    //camera.position.x = 1000;
+    camera.position.z = 1000;
+    //camera.lookAt(1000, 0, 0); // does not work when use TrackballControls
+    console.log("camera.postion:%o", camera.position);
+    
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5)
+    scene.add( ambientLight );
+
+    var directionalLight = new THREE.DirectionalLight( 0xffffff, 2 ); //平行光源（色、強度）
+    directionalLight.position.set(0,0,3000);
+    scene.add( directionalLight );
+
+    var directionalLight2 = new THREE.DirectionalLight( 0xffffff, 2 ); //平行光源（色、強度）
+    directionalLight2.position.set(0,0,-3000);
+    //scene.add( directionalLight2 );
+     
+    //TorusGeometry = new THREE.TorusGeometry(150,80,10,20 );
+    //TorusMaterial = new THREE.MeshPhongMaterial( { color: 'magenta' } );
+    //TorusMesh = new THREE.Mesh( TorusGeometry, TorusMaterial );
+    //TorusMesh.position.x = 1000;
+    //TorusMesh.position.y = 200;
+    //scene.add( TorusMesh );
+     
+    //grid = new THREE.GridHelper(600, 10, 0x888888, 0x888888);
+    //grid.position.y = -40;
+    //scene.add(grid);
+
+    const size = 500;
+    mAxes = new THREE.AxesHelper(size);
+    console.log("mAxes:%o", mAxes);
+    scene.add(mAxes);
+     
+    renderer = new THREE.WebGLRenderer({ antialias: true});
+    renderer.setSize( width, height );
+    renderer.setClearColor(new THREE.Color('black'));
+    document.body.appendChild( renderer.domElement );
+
+    resolution = new THREE.Vector2();
+    renderer.getSize(resolution);
+    console.log("resolution:%o", resolution);
+
+    trackball = new THREE.TrackballControls( camera, renderer.domElement );
+    trackball.rotateSpeed = 3.0;
+    trackball.zoomSpeed = 0.5;
+    trackball.panSpeed = 0.5;
+    //trackball.target.set(1000, 0, 0);  // -> works
+    //trackball.center.set(500, 0, 0);// -> works
+
+}
+  
+function animate() {
+
+    for (var k = 0; k < INSTANCE.length; k++ ){
+        if(props[INSTANCE[k].name]==true){
+            ELEMENT_MESH[k].visible = true;
+            WIRE_MESH[k].visible = true;
+        }else{
+            ELEMENT_MESH[k].visible = false;
+            WIRE_MESH[k].visible = false;
+        }
+    }
+    //console.log("ELEMENT_MESH:%o", ELEMENT_MESH);
+
+    stats.begin();
+
+    requestAnimationFrame( animate );
+    renderer.render( scene, camera );
+    trackball.update();   
+
+    stats.end();
+
+    console.log("call:" + renderer.info.render.calls)
+}
+
+function onResize() {
+  // サイズを取得
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  // レンダラーのサイズを調整する
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(width, height);
+
+  // カメラのアスペクト比を正す
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+}
+
+
+function mLineDiv(line){
+    let s = line.replace(/\r/g, '');
+    s = s.replace(/ /g, '');
+    let ss = s.split(',');
+    return  ss;
+}
+
+function mFindName(ss){
+    return ss.substring( ss.indexOf("=") + 1, ss.length );
+}
+
+function mFindWord(line, word){
+    line = line.replace(/ /g, '');
+    word = word.replace(/ /g, '');
+    //console.log("mFindWord:{"+line+"} {"+word+"}");
+    if (line.toLowerCase().indexOf(word.toLowerCase()) != -1){
+        return true;
+    } else {
+        return false;
+    }
+}
+
+
+function mParseModel(lines){
+    console.log("mParseModel:");
+
+    let n = lines.length;
+    console.log("n:"+n);
+
+    //#--- Part ---#
+    let part_index = [];
+    let nPart = 0;
+    for(var i = 0; i < n; i++){   
+        //console.log(":",lines[i]);
+
+        if( mFindWord(lines[i], "*Part, name=") ||
+            mFindWord(lines[i], "*Node, nset=")  ){
+            console.log(":",lines[i]);
+            part_index.push(i);
+            nPart = nPart + 1;
+        }
+    }
+    console.log("nPart:" + nPart) ;
+    
+    //PART = [];
+    
+    for(var k = 0; k < nPart; k++ ){
+
+        //p = PartType("", 0, zeros(1,1), 0, zeros(Int,1,1), NsetType[], "", 0)
+        let p = new Object();
+        p.name = "";
+        p.nNode = 0;
+        p.coordmat = [];
+        p.nElement = 0;
+        p.elementmat = [];
+        p.bounds = [];
+
+        //console.log("part_index[k]:" + part_index[k]) 
+        //console.log("lines:" + lines[part_index[k]])
+        
+        let ss = mLineDiv(lines[part_index[k]]);
+        let name_ = mFindName(ss[1]);
+        p.name = name_;
+            //console.log("PART["+ k + "].name:" + p.name)
+    
+        //#--- Node ---%
+        let index = 1;
+        for (var i = part_index[k]; i < n; i++ ){
+            if( mFindWord(lines[i],"*Node") ){
+                index = i;
+                break;
+            }
+        }
+        //console.log("index:"+ index);
+      
+        let nNode = 0;
+        for (var  i = index+1; i < n; i++ ){  //i = index+1 : n
+            if( mFindWord(lines[i],"*") ){ // occursin.("*", lines[i]) #strfind(lines{i}, '*') > 0
+                break;
+            }
+            nNode = nNode + 1;
+        }
+        p.nNode = nNode;
+        console.log("p.nNode:"+ p.nNode);
+
+        let coordmat = new Array(nNode*3); //zeros(nNode, 3);
+        for ( i = 0; i < nNode; i++ ){ //i = 1 : nNode
+          if( mFindWord(lines[index+1+i],"*")  ){ // occursin.("*", lines[index+i]) #strfind(lines{index+i}, '*') > 0
+              break;
+          }
+          let ss = mLineDiv(lines[index+1+i]);
+          //console.log("ss:"+ ss);
+          coordmat[i*3+0] = parseFloat(ss[1])
+          coordmat[i*3+1] = parseFloat(ss[2])
+          coordmat[i*3+2] = parseFloat(ss[3])
+        }
+        p.coordmat = coordmat; 
+
+        //#--- Element ---%
+        index = 1;
+        for( i = part_index[k]; i < n; i++ ){ // i = part_index[k] : n
+            if( mFindWord(lines[i],"*Element") ){ //occursin.("*Element", lines[i]) 
+              index = i;
+              break;
+            }
+        }
+        console.log("index:"+ index);
+     
+        let nElement = 0;
+        for (var i = index+1; i < n; i++ ){  //i = index+1 : n
+            if( mFindWord(lines[i],"*") ){ // occursin.("*", lines[i]) 
+                break;
+            }
+            nElement = nElement + 1;
+        }
+        p.nElement = nElement;
+        console.log("p.nElement:"+ p.nElement);
+
+        let elementmat = new Array(nElement*8); //zeros(Int, nElement, 8);
+        for(var i = 0; i < nElement; i++ ){ // i = 1 : nElement
+            if( mFindWord(lines[index+1+i],"*")  ){ // occursin.("*", lines[index+i]) 
+                break;
+            }
+            let ss = mLineDiv(lines[index+1+i]);
+            //console.log("ss:"+ ss);
+            for (var j = 0; j < 8; j++){
+                elementmat[i*8+j] = parseInt(ss[1+j])
+            }
+        }
+        p.elementmat = elementmat //# column major
+
+        //--- Bounds ---//
+        p.bounds = mGetBounds(coordmat);
+
+/*        
+        //#--- Nset ---%
+        nset_index = [];
+        for i = part_index[k] : n
+          if occursin.("*Nset", lines[i]) && occursin.("generate", lines[i])  #contains(lines{i}, '*Nset') > 0  && contains(lines{i}, 'generate') > 0
+              #nset_index = [nset_index i];
+              push!(nset_index, i)
+          end
+          if occursin.("*End Part", lines[i])  #contains(lines{i}, '*End Part') > 0
+              break
+          end
+        end
+      
+        nset_num = length(nset_index)
+        #NSET_p(1:nset_num) = struct('name', "");
+      
+        for i = 1 : nset_num
+            ns = NsetType("", "", 0, "", 0, zeros(Int,1))
+            push!(PART[k].NSET, ns)
+            
+            s = replace(lines[nset_index[i]], " " => "")
+            ss = split(s, ",", keepempty=false)
+            ss = ss[2]
+            name_ = ss[ findfirst("nset=", ss).stop + 1 : length(ss) ];
+            PART[k].NSET[i].name = name_
+            
+            s = replace(lines[nset_index[i]+1], " " => "") #replace(lines{nset_index(i)+1},' ', '');
+            ss = split( s,',');
+            a = [j for j in parse(Int, ss[1]):parse(Int, ss[3]):parse(Int, ss[2])] #[parse(Int, ss[1]) : parse(Int, ss[3]) : parse(Int, ss[2])];
+            PART[k].NSET[i].nodes = a;    
+        end
+        
+        for i = part_index[k] : n
+            if occursin.("*Solid Section", lines[i])  #strfind(lines{i}, '*Solid Section') > 0
+              s = replace(lines[i], " " => "")
+              ss = split(s, ",", keepempty=false)
+              for j = 1 : length(ss)
+                  sss = ss[j];
+                  if occursin.("material=", sss)  #strfind(sss, 'material=') > 0
+                    name_ = sss[ findfirst("material=", sss).stop + 1 : length(sss) ];
+                    PART[k].material_name = name_;
+                    break
+                  end
+              end
+              break
+            end
+        end
+        */
+
+        PART.push(p);
+        console.log("PART[%d]:%o", k, PART[k]);
+    }//
+
+
+    //#%--- Instance ---%
+    let instance_index = [];
+    for(var i = 0; i < n; i++ ){ 
+        //if( lines[i].toLowerCase().indexOf("*Instance".toLowerCase()) != -1 ){
+        if( mFindWord(lines[i], "*Instance") ){
+            //console.log(":",lines[i]);
+            instance_index.push(i);
+            nPart = nPart + 1;
+        }
+    }
+    let instance_num = instance_index.length;
+    console.log("instance_num:" + instance_num);
+    
+    for(var k = 0; k < instance_num; k++ ){
+        
+        let p = new Object();
+        p.name = "";
+        p.part_id = -1;
+        p.translate = [];
+
+        let ss = mLineDiv(lines[instance_index[k]]);
+        p.name = mFindName(ss[1]);
+            console.log("INSTANCE["+ k + "].name:" + p.name)
+
+        p.part_name = mFindName(ss[2]);
+            console.log("INSTANCE["+ k + "].part_name:" + p.part_name)
+
+        for(var i = 0; i < nPart; i++){
+            if( PART[i].name == p.part_name ){
+              p.part_id = i;
+              break
+            }
+        }
+
+        for (var i = instance_index[k]+1; i < n; i++ ){
+            if( mFindWord(lines[i],"*End Instance") ){ 
+                break;
+            }
+            p.translate.push(lines[i]);
+        }
+
+        INSTANCE.push(p);
+        //console.log("INSTANCE[%d]:%o", k, INSTANCE[k]);
+    }
+
+    if(instance_num == 0){
+        console.log("NO INSTANCE MODEL:"+instance_index.length);
+        for(var k = 0; k < nPart; k++ ){
+            let p = new Object();
+            p.name = PART[k].name;
+            p.part_id = k;
+            p.translate = [];
+            INSTANCE.push(p);
+        }
+        instance_num = INSTANCE.length;
+        console.log("instance_num:" + instance_num);
+    }
+
+    //%--- Global Model ---%
+    let nNode = 0;
+    let nElement = 0;
+    let coordmat = [];
+    let elementmat = [];
+
+    for(var i = 0; i < instance_num; i++){ 
+        
+        let part_id = INSTANCE[i].part_id;
+        let coordmat_i = PART[part_id].coordmat.slice();
+        let elementmat_i = PART[part_id].elementmat.slice();
+        INSTANCE[i].node_offset = nNode;
+        INSTANCE[i].element_offset = nElement;
+        INSTANCE[i].nNode = PART[part_id].nNode;
+        INSTANCE[i].nElement = PART[part_id].nElement;
+        //INSTANCE[i].elements = [k for k in 1 : INSTANCE[i].nElement]
+        
+        //T =  Matrix(I,3,3)
+        //let T = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0] ];
+            //console.log("T:"+ T);
+        let nt = INSTANCE[i].translate.length;
+            //console.log("n:"+ n);
+        
+        for(var j = 0; j < nt; j++){  //j = length(INSTANCE[i].translate): -1 : 1
+            let s = INSTANCE[i].translate[nt-1-j];
+            let ss = mLineDiv(s);
+                //console.log("ss:"+ ss);
+            
+            if(ss.length == 3){ //length(ss) == 3
+                //offset_ = [parse(Float64, ss[1]) parse(Float64, ss[2]) parse(Float64, ss[3])]'
+                //coordmat_i = coordmat_i + offset_ * ones(1,size(coordmat_i,2))
+                let offset_ = [parseFloat(ss[0]), parseFloat(ss[1]), parseFloat(ss[2])];
+                    //console.log("offset_:"+ offset_);
+                for(var k = 0; k < INSTANCE[i].nNode; k++ ){
+                    coordmat_i[k*3+0] += offset_[0];
+                    coordmat_i[k*3+1] += offset_[1];
+                    coordmat_i[k*3+2] += offset_[2];
+                }
+            }
+            else if(ss.length == 7){ //length(ss) == 7
+                /*
+                nv = [parse(Float64, ss[4]) - parse(Float64, ss[1])
+                      parse(Float64, ss[5]) - parse(Float64, ss[2])
+                      parse(Float64, ss[6]) - parse(Float64, ss[3]) ];
+                nv = nv / norm(nv);
+                n1 = nv[1];
+                n2 = nv[2];
+                n3 = nv[3];
+                d = parse(Float64, ss[7]) / 180.0 * pi;
+                T = [n1*n1*(1-cos(d))+cos(d)  n1*n2*(1-cos(d))-n3*sin(d)  n1*n3*(1-cos(d))+n2*sin(d)
+                     n1*n2*(1-cos(d))+n3*sin(d)  n2*n2*(1-cos(d))+cos(d)  n2*n3*(1-cos(d))-n1*sin(d)
+                     n1*n3*(1-cos(d))-n2*sin(d)  n2*n3*(1-cos(d))+n1*sin(d)  n3*n3*(1-cos(d))+cos(d) ];
+                coordmat_i = T * coordmat_i;
+                */
+                let nv = new THREE.Vector3();
+                nv.x = parseFloat(ss[3]) - parseFloat(ss[0]);
+                nv.y = parseFloat(ss[4]) - parseFloat(ss[1]);
+                nv.z = parseFloat(ss[5]) - parseFloat(ss[2]);
+                nv = nv.normalize();
+                    //console.log("nv:%o", nv);
+                let d = parseFloat(ss[6]) / 180.0 * Math.PI;
+                let T = [[nv.x*nv.x*(1.0-Math.cos(d))+Math.cos(d), nv.x*nv.y*(1.0-Math.cos(d))-nv.z*Math.sin(d), nv.x*nv.z*(1.0-Math.cos(d))+nv.y*Math.sin(d)],
+                         [nv.x*nv.y*(1.0-Math.cos(d))+nv.z*Math.cos(d), nv.y*nv.y*(1.0-Math.cos(d))+Math.cos(d), nv.y*nv.z*(1.0-Math.cos(d))-nv.x*Math.sin(d)],
+                         [nv.x*nv.z*(1.0-Math.cos(d))-nv.y*Math.sin(d), nv.y*nv.z*(1.0-Math.cos(d))+nv.x*Math.sin(d), nv.z*nv.z*(1.0-Math.cos(d))+Math.cos(d)] ];
+
+                for(var k = 0; k < INSTANCE[i].nNode; k++ ){
+                    let a = math.multiply(T, [coordmat_i[k*3+0],coordmat_i[k*3+1],coordmat_i[k*3+2]]);
+                        //console.log("a:"+a);
+                    coordmat_i[k*3+0] = a[0];
+                    coordmat_i[k*3+1] = a[1];
+                    coordmat_i[k*3+2] = a[2];
+                }
+            }
+            
+        }
+        
+        //elementmat_i = PART[part_id].elementmat .+ nNode;
+        for(var k = 0; k < elementmat_i.length; k++ ){
+            elementmat_i[k] += nNode;
+        }
+        
+        INSTANCE[i].coordmat = coordmat_i;
+        INSTANCE[i].elementmat = PART[part_id].elementmat.slice();
+        INSTANCE[i].bounds = mGetBounds(coordmat_i);
+
+        if(instance_index.length==0){
+            for(var k = 0; k < INSTANCE[i].elementmat.length; k++ ){
+                INSTANCE[i].elementmat[k] -= nNode;
+            }
+        }
+
+        //coordmat.push(coordmat_i);
+        //elementmat.push(elementmat_i);
+        for(var k = 0; k < coordmat_i.length; k++ ){
+            coordmat.push(coordmat_i[k]);
+        }
+        for(var k = 0; k < elementmat_i.length; k++ ){
+            elementmat.push(elementmat_i[k]);
+        }
+
+        nNode = nNode + PART[part_id].nNode;
+        nElement = nElement + PART[part_id].nElement;
+        
+        console.log("INSTANCE[%d]:%o", i, INSTANCE[i]);
+    }
+
+    MODEL.nNode = nNode;
+    MODEL.nElement = nElement;
+    MODEL.coordmat = coordmat;
+    MODEL.elementmat = elementmat;
+    MODEL.bounds = mGetBounds(coordmat);
+    console.log("MODEL:%o", MODEL);
+   
+}
+
+
+function mAddModelToScene(){
+
+    for(var k = 0; k < INSTANCE.length; k++ ){  //let k = 1;
+        /*let coordmat = PART[k].coordmat;
+        let nNode = PART[k].nNode;
+        let elementmat = PART[k].elementmat;
+        let nElement = PART[k].nElement;*/
+        let coordmat = INSTANCE[k].coordmat.slice();
+        let nNode = INSTANCE[k].nNode;
+        let elementmat = INSTANCE[k].elementmat.slice();
+        let nElement = INSTANCE[k].nElement;
+
+        //--- Node ---//
+        /*for ( i = 0; i < nNode; i++ ){
+            const dotGeometry = new THREE.BufferGeometry();
+            dotGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([coordmat[i*3+0], coordmat[i*3+1], coordmat[i*3+2]]), 3));
+            const dotMaterial = new THREE.PointsMaterial({ size: 1.0, color: "red" });
+            const dot = new THREE.Points(dotGeometry, dotMaterial);
+            scene.add( dot );
+        }*/
+        
+        let mat = new THREE.MeshLambertMaterial( { color: 'blue', side: THREE.DoubleSide } );
+        let faces =[0, 3, 2,
+                    2, 1, 0,
+                    4, 5, 6,
+                    6, 7, 4,
+                    0, 1, 5,
+                    5, 4, 0,
+                    3, 7, 6,
+                    6, 2, 3,
+                    0, 4, 7,
+                    7, 3, 0,
+                    1, 2, 6,
+                    6, 5, 1];
+
+        let matLine = new THREE.LineMaterial( {
+            color: "white", //0xffffff, does not work
+            linewidth: 1.5, // in world units with size attenuation, pixels otherwise
+            vertexColors: true,
+            resolution,  // to be set by renderer, eventually
+            dashed: false,
+            alphaToCoverage: true,
+        } );
+
+        let geometry = new THREE.BufferGeometry();
+        let vertices = new Float32Array(8*3*nElement);
+        //let all_faces = new Int32Array(12*3*nElement); //->does not work
+        let all_faces = [];
+
+        let line_geo = new THREE.LineSegmentsGeometry();
+        let line_idx = [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7];
+        let node_vertices = [];
+        let colors = [];
+
+        for (var e = 0; e < nElement; e++ ){
+
+            for(var i=0;i<8;i++){ 
+                let ni = elementmat[e*8+i]-1;
+                vertices[e*8*3+i*3+0] = coordmat[ni*3+0];
+                vertices[e*8*3+i*3+1] = coordmat[ni*3+1];
+                vertices[e*8*3+i*3+2] = coordmat[ni*3+2];
+            }
+            for(var i=0;i<36;i++){ 
+                //all_faces[e*36+i] = faces[i] + e*8;
+                all_faces.push(faces[i] + e*8);
+            }
+            
+            for(var i=0;i<line_idx.length;i++){ 
+                let ni = elementmat[e*8+line_idx[i]]-1;
+                node_vertices.push(coordmat[ni*3+0], coordmat[ni*3+1], coordmat[ni*3+2]);
+                colors.push( 255, 255, 255 );
+            }
+            
+        } 
+
+        //console.log("vertices:", vertices);
+        //console.log("all_faces:", all_faces);
+        //console.log("faces:", faces);
+        //geometry.setIndex(faces);
+        geometry.setIndex(all_faces);
+        geometry.setAttribute( 'position', new THREE.BufferAttribute( vertices, 3 ) );
+        geometry.computeVertexNormals();
+        var Triangle =  new THREE.Mesh(geometry, mat);
+        ELEMENT_MESH.push(Triangle);
+        scene.add(Triangle);   
+
+        line_geo.setPositions( node_vertices );
+        line_geo.setColors( colors );
+        let line = new THREE.LineSegments2( line_geo, matLine );
+        line.computeLineDistances();
+        WIRE_MESH.push(line);
+        scene.add( line );
+
+    }
+
+    //let modelSize = mGetModelSize(PART[0]);
+    let modelSize = mGetModelSize(MODEL);
+    console.log("modelSize:%o", modelSize);
+
+    scene.remove(mAxes);
+    //delete mAxes;
+    mAxes = null;
+    
+    let s = Math.max(Math.max(modelSize.x, modelSize.y), modelSize.z);
+    console.log("s:" + s);
+    mAxes = new THREE.AxesHelper(s*0.1);
+    scene.add(mAxes);
+
+    //let modelCenter = mGetModelCenter(PART[0]);
+    let modelCenter = mGetModelCenter(MODEL);
+    console.log("modelCenter:%o", modelCenter);
+
+    camera.near = s * 0.001;
+    camera.far = s * 10;
+    camera.position.x = modelCenter.x;
+    camera.position.y = modelCenter.y;
+    camera.position.z = modelCenter.z + s*2;
+    //camera.lookAt(modelCenter);
+    camera.updateProjectionMatrix();
+    //console.log("camera.near:" + camera.near);
+
+    trackball.target.set(modelCenter.x, modelCenter.y, modelCenter.z);
+    trackball.center.set(modelCenter.x, modelCenter.y, modelCenter.z);
+
+    for (var k = 0; k < INSTANCE.length; k++ ){
+        props[INSTANCE[k].name] = true;
+        gui.add( props, INSTANCE[k].name);
+    }
+
+}
+
+function mGetBounds(coordmat){
+    console.log("mGetBounds:");
+    let min_x = coordmat[0];
+    let min_y = coordmat[1];
+    let min_z = coordmat[2];
+    let max_x = coordmat[0];
+    let max_y = coordmat[1];
+    let max_z = coordmat[2];
+    let n = coordmat.length/3;
+
+    for (var i = 0; i < n; i++ ){ 
+        if(min_x > coordmat[i*3+0]){
+            min_x = coordmat[i*3+0];
+        }
+        if(min_y > coordmat[i*3+1]){
+            min_y = coordmat[i*3+1];
+        }
+        if(min_z > coordmat[i*3+2]){
+            min_z = coordmat[i*3+2];
+        }
+        if(max_x < coordmat[i*3+0]){
+            max_x = coordmat[i*3+0];
+        }
+        if(max_y < coordmat[i*3+1]){
+            max_y = coordmat[i*3+1];
+        }
+        if(max_z < coordmat[i*3+2]){
+            max_z = coordmat[i*3+2];
+        }
+    }
+
+    return [min_x, max_x, min_y, max_y, min_z, max_z]
+}
+
+function mGetModelSize(p){
+    console.log("mGetModelSize:");
+    let b = p.bounds;
+    //return new THREE.Vector3(max_x-min_x, max_y-min_y, max_z-min_z);
+    return new THREE.Vector3(b[1]-b[0], b[3]-b[2], b[5]-b[4]);
+}
+
+function mGetModelCenter(p){
+    console.log("mGetModelCenter:");
+    let b = p.bounds;
+    return new THREE.Vector3((b[1]+b[0])/2, (b[3]+b[2])/2, (b[5]+b[4])/2);
+}
+
+
+</script>
+</body>
+</html>
